@@ -15,106 +15,106 @@ import (
 )
 
 func main() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
+	// Load Twitter API credentials from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Could not load the .env file, make sure it exists")
 	}
 
+	// Get API keys and tokens from environment variables
 	consumerKey := os.Getenv("CONSUMER_KEY")
 	consumerSecret := os.Getenv("CONSUMER_SECRET")
 	accessToken := os.Getenv("ACCESS_TOKEN")
 	accessSecret := os.Getenv("ACCESS_SECRET")
 
-	// Create OAuth1 configuration
-	config := oauth1.NewConfig(consumerKey, consumerSecret)
-	token := oauth1.NewToken(accessToken, accessSecret)
+	// Set up OAuth1 client configuration
+	authConfig := oauth1.NewConfig(consumerKey, consumerSecret)
+	userToken := oauth1.NewToken(accessToken, accessSecret)
 
-	// Create HTTP client
-	client := config.Client(oauth1.NoContext, token)
+	// Create an HTTP client for Twitter API requests
+	client := authConfig.Client(oauth1.NoContext, userToken)
 
-	// Post a new tweet with a unique timestamp
-	tweetText := fmt.Sprintf("Avinash Tweeting Test 2!! %s!", time.Now().Format(time.RFC3339))
-	tweetID, err := postTweet(client, tweetText)
+	// Create a tweet with the current timestamp
+	tweetText := fmt.Sprintf("Avinash@Twitter API testing 2!, time now is %s!", time.Now().Format(time.RFC3339))
+	tweetID, err := sendTweet(client, tweetText)
 	if err != nil {
 		log.Fatalf("Error posting tweet: %v", err)
 	}
-	fmt.Printf("Posted tweet with ID: %s\n", tweetID)
+	fmt.Printf("Successfully posted tweet with ID: %s\n", tweetID)
 
-	// Wait for user input before deleting the tweet
-	var input string
-	fmt.Println("Press 'd' to delete the tweet or any other key to exit:")
-	fmt.Scanln(&input)
+	// Ask the user for tweet ID to delete
+	fmt.Println("Enter the tweet ID you want to delete, or press 'Enter' to skip:")
+	var tweetToDelete string
+	fmt.Scanln(&tweetToDelete)
 
-	if input == "d" {
-		// Delete the tweet
-		if err := deleteTweet(client, tweetID); err != nil {
-			log.Fatalf("Error deleting tweet: %v", err)
+	// If the user enters an ID, delete the tweet
+	if tweetToDelete != "" {
+		if err := deleteTweetByID(client, tweetToDelete); err != nil {
+			log.Fatalf("Failed to delete tweet: %v", err)
 		}
-		fmt.Printf("Deleted tweet with ID: %s\n", tweetID)
+		fmt.Printf("Successfully deleted tweet with ID: %s\n", tweetToDelete)
 	} else {
-		fmt.Println("Exiting without deleting the tweet.")
+		fmt.Println("No tweet ID entered, exiting.")
 	}
 }
 
-// postTweet creates a new tweet and returns the tweet ID
-func postTweet(client *http.Client, tweetText string) (string, error) {
-	url := "https://api.twitter.com/2/tweets"
-	params := map[string]string{"text": tweetText}
-	jsonData, err := json.Marshal(params)
+// sendTweet posts a new tweet and returns the tweet's ID
+func sendTweet(client *http.Client, message string) (string, error) {
+	apiURL := "https://api.twitter.com/2/tweets"
+	tweetData := map[string]string{"text": message}
+	jsonData, err := json.Marshal(tweetData)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal tweet data: %w", err)
+		return "", fmt.Errorf("could not prepare tweet data: %w", err)
 	}
 
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := client.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to post tweet: %w", err)
+		return "", fmt.Errorf("failed to send tweet: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check for a successful response (201 Created)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body) // Read response body for logging
-		return "", fmt.Errorf("failed to post tweet, status code: %d, response: %s", resp.StatusCode, string(bodyBytes))
+		body, _ := ioutil.ReadAll(resp.Body) // Capture response for debugging
+		return "", fmt.Errorf("tweet not created, status: %d, response: %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
+	// Extract the tweet ID from the response
+	var responseBody struct {
 		Data struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&responseBody); err != nil {
+		return "", fmt.Errorf("could not parse response: %w", err)
 	}
 
-	return result.Data.ID, nil
+	return responseBody.Data.ID, nil
 }
 
-// deleteTweet deletes a tweet by ID
-func deleteTweet(client *http.Client, tweetID string) error {
-	url := fmt.Sprintf("https://api.twitter.com/2/tweets/%s", tweetID)
+// deleteTweetByID removes a tweet by its ID
+func deleteTweetByID(client *http.Client, tweetID string) error {
+	apiURL := fmt.Sprintf("https://api.twitter.com/2/tweets/%s", tweetID)
 
-	// Create a new DELETE request
-	req, err := http.NewRequest("DELETE", url, nil)
+	// Create a DELETE request
+	req, err := http.NewRequest("DELETE", apiURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("could not create request to delete tweet: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to delete tweet: %w", err)
+		return fmt.Errorf("error sending delete request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Accept 200 OK and 204 No Content as successful responses
+	// Expect a 200 OK or 204 No Content response
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		var errorResponse struct {
+		var errResp struct {
 			Error string `json:"error"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
-			return fmt.Errorf("failed to decode error response: %w", err)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("could not parse error response: %w", err)
 		}
-		return fmt.Errorf("failed to delete tweet, status code: %d, error: %s", resp.StatusCode, errorResponse.Error)
+		return fmt.Errorf("failed to delete tweet, status: %d, error: %s", resp.StatusCode, errResp.Error)
 	}
 
 	return nil
